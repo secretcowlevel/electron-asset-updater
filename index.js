@@ -1,4 +1,4 @@
-const unzip = require('unzip');
+const unzip = require('node-unzip-2');
 const path = require('path');
 const fs = require('fs');
 const md5file = require('md5-file');
