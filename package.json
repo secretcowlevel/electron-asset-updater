@@ -1,6 +1,6 @@
 {
   "name": "electron-asset-updater",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Updates binary assets from AWS S3 Bucket",
   "main": "index.js",
   "scripts": {

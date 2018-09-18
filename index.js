@@ -14,7 +14,7 @@ let options = {
 };
 
 
-const downloadAndReadFile = (filename, md5Only, zipped, progressCb = () => null) => new Promise(async (resolve, reject) => {
+const downloadAndReadFile = (filename, md5Only, zipped, progressCb = () => null) => new Promise((resolve, reject) => {
     options.log.info(`downloadAndSaveFile() -> ${filename}`);
     const remoteFileUri = `${options.remote}${filename}`;
     options.log.info(`Remote URL: ${remoteFileUri}`);
@@ -23,12 +23,6 @@ const downloadAndReadFile = (filename, md5Only, zipped, progressCb = () => null)
 
     progress(request(remoteFileUri))
         .on('progress', (state) => {
-            /*
-            { time: { elapsed: 0.026, remaining: null },
-[1]   speed: null,
-[1]   percent: 0.0015980019115462965,
-[1]   size: { total: 10237785, transferred: 16360 } }
-            */
             let progressTxt = `Transferred ${Math.floor(state.percent * 100)}% (${Math.floor(state.size.transferred / 1000 / 1000)}Mb / ${Math.floor(state.size.total / 1000 / 1000)}Mb)`; // eslint-disable-line max-len
             progressCb(progressTxt);
         })
@@ -36,29 +30,22 @@ const downloadAndReadFile = (filename, md5Only, zipped, progressCb = () => null)
             options.log.error('ERROR IN GOT');
             reject(err);
         })
-    // @TODO - this is new API stuff that lets us get progress, not done yet
-    // .on('response', () => {
-    //     options.log.info('RESPONSE FIRED');
-    // })
         .on('end', () => {
             options.log.info(`${filename} Downloaded!`);
             if (zipped) {
                 fs.createReadStream(tmpFilePath).pipe(unzip.Extract({path: path.join(options.appData, '/assets')}));
             }
-            fs.readFile(tmpFilePath, (err, data) => {
-                if (tmpFilePath.split('.')[1] === 'md5') {
-                    options.log.info(`>>> File Data: ${data}`);
+            const data = fs.readFileSync(tmpFilePath);
+            if (tmpFilePath.split('.')[1] === 'md5') {
+                options.log.info(`>>> File Data: ${data}`);
+            }
+            md5file(tmpFilePath, (err2, hash) => {
+                if (err2) {
+                    reject(new Error('ERROR CREATING MD5'));
                 }
-                md5file(tmpFilePath, (err2, hash) => {
-                    if (err2) {
-                        reject(new Error('ERROR CREATING MD5'));
-                    }
-                    options.log.info(`MD5 of file: ${hash}`);
-                    // fs.unlink(tmpFilePath, () => {
-                    //     options.log.info(`Deleted ${filename} with hash ${hash}!`);
-                    resolve({data, hash});
-                // });
-                });
+                options.log.info(`MD5 of file: ${hash}`);
+                resolve({data, hash});
+            // });
             });
         })
         .pipe(fs.createWriteStream(tmpFilePath));
@@ -99,12 +86,6 @@ const downloadAndCompareChecksums = (filename, progressCb = () => null) => new P
         options.log.info('md5 matches! No update needed!');
         resolve(false);
     }
-    // });
-    // })
-    // .catch((/* err */) => {
-    //     options.log.error('Error in downloadAndCompareChecksums()');
-    //     reject();
-    // });
 });
 
 exports.init = (config) => {
@@ -119,22 +100,24 @@ exports.assetUpdater = (assets, cb, progressCb = () => null) => new Promise(asyn
     }
 
     let assetsNeedUpdating = [];
-    let promiseArray = assets.map((asset, i) => {
+    let promiseArray = assets.map(async (asset, i) => {
         options.log.info(`Checking ${i + 1} of ${assets.length}...`);
         // cb(`Checking ${i + 1} of ${assets.length}...`);
-        return downloadAndCompareChecksums(`${asset}.md5`, progressCb)
-            .then((needsUpdate) => {
-                if (needsUpdate) {
-                    assetsNeedUpdating.push(asset);
-                }
-            });
+        const needsUpdate = await downloadAndCompareChecksums(`${asset}.md5`, progressCb);
+        if (needsUpdate) {
+            assetsNeedUpdating.push(asset);
+        }
     });
+
+    console.log(`----> ${JSON.stringify(promiseArray)}`)
 
     // so we don't remove directory if nothing is updating!
     if (!promiseArray.length) {
         options.log.info('NO UPDATES NEEDED');
         resolve();
     }
+
+
     Promise.all(promiseArray)
         .then(() => {
             options.log.info(`ASSETS NEED UPDATING: ${assetsNeedUpdating}`);
@@ -142,22 +125,17 @@ exports.assetUpdater = (assets, cb, progressCb = () => null) => new Promise(asyn
             if (assetsNeedUpdating.length) {
                 cb(`Downloading 1 of ${assetsNeedUpdating.length}...`);
             }
-            let updateArray = assetsNeedUpdating.map((asset, i) => {
+            let updateArray = assetsNeedUpdating.map(async (asset, i) => {
                 options.log.info(`Preparing to download ${asset}.zip`);
                 // remove the old directory
                 rimraf.sync(path.join(options.appData, `/assets/${asset}/`));
-                return downloadAndReadFile(`${asset}.zip`, true, true, progressCb)
-                    .then(({hash}) => {
-                        options.log.info(`FINISHED DOWNLOADING ${i + 1} of ${assetsNeedUpdating.length}`);
-                        updated += 1;
-                        cb(`Downloading ${updated} of ${assetsNeedUpdating.length}...`);
-                        // save new checksum
-                        fs.writeFileSync(path.join(options.appData, `/assets/${asset}.md5`), hash);
-                        options.log.info('Checksum saved!');
-                    })
-                    .catch((e) => {
-                        throw new Error(e);
-                    });
+                const {hash} = await downloadAndReadFile(`${asset}.zip`, true, true, progressCb)
+                options.log.info(`FINISHED DOWNLOADING ${i + 1} of ${assetsNeedUpdating.length}`);
+                updated += 1;
+                cb(`Downloading ${updated} of ${assetsNeedUpdating.length}...`);
+                // save new checksum
+                fs.writeFileSync(path.join(options.appData, `/assets/${asset}.md5`), hash);
+                options.log.info('Checksum saved!');
             });
 
             Promise.all(updateArray)
