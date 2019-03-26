@@ -16,6 +16,10 @@ const unzip = require('node-unzip-2');
 
 const progress = require('request-progress');
 
+const Bluebird = require('bluebird');
+
+const rimraf = require('rimraf');
+
 const NO_OP = () => {};
 
 const defaultOptions = {
@@ -34,22 +38,25 @@ async function downloadFile(filename, progressCb, options = {}) {
   return new Promise(async (resolve, reject) => {
     const remoteFileUri = `${updaterOptions.remote}${filename}`;
     const tmpFilePath = path.join(updaterOptions.appData, `/tmp/${filename}`);
-    updaterOptions.log.info(`downloadAndSaveFile() -> ${filename}`);
+    updaterOptions.log.info(`downloadFile() -> ${tmpFilePath}`);
     updaterOptions.log.info(`Remote URL: ${remoteFileUri}`);
-    await progress(request(remoteFileUri)).on('progress', state => {
+    await progress((await request(remoteFileUri))).on('progress', state => {
       progressCb(`Transferred ${Math.floor(state.percent * 100)}% (${Math.floor(state.size.transferred / 1000 / 1000)}Mb / ${Math.floor(state.size.total / 1000 / 1000)}Mb)`);
     }).on('error', err => {
       updaterOptions.log.error('ERROR IN GET');
+
+      if (options.errorCb) {
+        options.errorCb();
+      }
+
       reject(err);
     }).on('end', async () => {
       updaterOptions.log.info(`${filename} Downloaded!`);
 
       const finish = async () => {
-        const data = fs.readFileSync(tmpFilePath);
-
-        if (tmpFilePath.split('.')[1] === 'md5') {
-          updaterOptions.log.info(`>>> File Data: ${data}`);
-        }
+        const data = fs.readFileSync(tmpFilePath); // if (tmpFilePath.split('.')[1] === 'md5') {
+        //   updaterOptions.log.info(`>>> File Data: ${data}`)
+        // }
 
         md5file(tmpFilePath, (err2, hash) => {
           if (err2) {
@@ -74,7 +81,26 @@ async function downloadFile(filename, progressCb, options = {}) {
       } else {
         finish();
       }
-    });
+    }).pipe(fs.createWriteStream(tmpFilePath));
+  });
+}
+
+async function getLocalHash(filename) {
+  return new Promise((resolve, reject) => {
+    let md5 = null;
+
+    try {
+      md5 = fs.readFileSync(path.join(updaterOptions.appData, `/assets/${filename}`), 'utf8');
+    } catch (e) {// empty on purpose
+    }
+
+    if (md5) {
+      updaterOptions.log.info(`Local MD5: ${md5}`);
+    } else {
+      updaterOptions.log.info(`No local ${filename} md5 found, so forcing download!`);
+    }
+
+    resolve(md5);
   });
 } // the init function, called before we call the assetUpdater
 
@@ -84,24 +110,49 @@ exports.init = config => {
 }; // the main entry point to start the updater
 
 
-exports.assetUpdater = function (assets, cb, progressCb) {
-  updaterOptions.log.info('WHAAAAAAAAAAAAAAAT'); // make sure we have a tmp folder for downloads!
+exports.assetUpdater = async function (assets, cb, progressCb = () => null, errorCb = () => null) {
+  updaterOptions.log.info('\n************************\nWHAAAAAAAAAAAAAAAT\n************************\n'); // make sure we have a tmp folder for downloads!
 
   const tmpFolder = path.join(updaterOptions.appData, '/tmp');
 
   if (!fs.existsSync(tmpFolder)) {
     fs.mkdirSync(tmpFolder);
-  } // keep track of all the assets we need to update
+  } // First we prep which files need updates...
 
 
-  let assetsNeedUpdating = [];
-  assets.forEach(async (asset, i) => {
-    updaterOptions.log.info(`Downloading checksum ${i + 1} of ${assets.length}...`);
-    const needsUpdate = await downloadFile(`${asset}.md5`, progressCb);
+  const updateList = await Bluebird.mapSeries(assets, async function (asset) {
+    updaterOptions.log.info(':: Downloading/Checking ' + `${asset}.md5`);
+    const {
+      data
+    } = await downloadFile(`${asset}.md5`, progressCb, {
+      errorCb
+    });
+    const md5 = await getLocalHash(`${asset}.md5`);
+    return {
+      asset: asset,
+      needUpdate: String(data).trim() !== String(md5).trim()
+    };
+  }).filter(a => a.needUpdate); // Next we download the zip files that we're looking for!
 
-    if (needsUpdate) {
-      assetsNeedUpdating.push(asset);
-    }
-  });
-  console.log(`----> ${JSON.stringify(assetsNeedUpdating)}`);
+  updaterOptions.log.info(':: Updating ' + `${updateList.length} assets.`);
+
+  if (updateList.length) {
+    await Bluebird.mapSeries(updateList, async function (asset, index, length) {
+      updaterOptions.log.info(':: Updating ' + `${asset.asset}.zip`);
+      cb(`Downloading ${index + 1} of ${length}`); // remove the old stale folder
+
+      await rimraf.sync(path.join(updaterOptions.appData, `/assets/${asset.asset}/`));
+      const {
+        hash,
+        data
+      } = await downloadFile(`${asset.asset}.zip`, progressCb, {
+        zipped: true
+      });
+      await fs.writeFileSync(path.join(updaterOptions.appData, `/assets/${asset.asset}.md5`), hash);
+    });
+  }
+
+  updaterOptions.log.info(':: Removing TMP directory!');
+  await rimraf.sync(path.join(updaterOptions.appData, `/tmp`));
+  updaterOptions.log.info('***ALL DONE***');
 };
