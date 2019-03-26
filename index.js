@@ -111,7 +111,7 @@ exports.assetUpdater = async function (assets, cb, progressCb = () => null, erro
   const updateList = await Bluebird.mapSeries(assets, async function (asset) {
     updaterOptions.log.info(':: Downloading/Checking ' + `${asset}.md5`)
     const { data } = await downloadFile(`${asset}.md5`, progressCb, { errorCb })
-
+    updaterOptions.log.info(`Remote MD5: ${String(data).trim()}`)
     const md5 = await getLocalHash(`${asset}.md5`)
 
     return {
@@ -126,10 +126,10 @@ exports.assetUpdater = async function (assets, cb, progressCb = () => null, erro
   if (updateList.length) {
     await Bluebird.mapSeries(updateList, async function (asset, index, length) {
       updaterOptions.log.info(':: Updating ' + `${asset.asset}.zip`)
-      cb(`Downloading ${index + 1} of ${length}`)
+      cb(`Downloading ${index + 1} of ${length}`) // eslint-disable-line standard/no-callback-literal
       // remove the old stale folder
       await rimraf.sync(path.join(updaterOptions.appData, `/assets/${asset.asset}/`))
-      const { hash, data } = await downloadFile(`${asset.asset}.zip`, progressCb, { zipped: true })
+      const { hash } = await downloadFile(`${asset.asset}.zip`, progressCb, { zipped: true })
       await fs.writeFileSync(path.join(updaterOptions.appData, `/assets/${asset.asset}.md5`), hash)
     })
   }
