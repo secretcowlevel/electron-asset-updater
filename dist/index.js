@@ -145,6 +145,9 @@ exports.assetUpdater = async function (assets, cb, progressCb = () => null, erro
   }
 
   updaterOptions.log.info(':: Removing TMP directory!');
-  await rimraf.sync(path.join(updaterOptions.appData, `/tmp`));
-  updaterOptions.log.info('***ALL DONE***');
+  cb('Done! Cleaning up (restart if this hangs)'); // eslint-disable-line standard/no-callback-literal
+
+  await rimraf(path.join(updaterOptions.appData, `/tmp`), () => {
+    updaterOptions.log.info('***ALL DONE***');
+  });
 };

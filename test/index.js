@@ -10,7 +10,7 @@ init({
 })
 
 async function doit () {
-  await assetUpdater(['video', 'cardart', 'audio', 'cardbacks', 'parallax', 'avatars', 'ui'], (t) => {
+  await assetUpdater(['cardbacks', 'parallax', 'avatars', 'ui'], (t) => {
     console.log('text ' + t)
   }, (p) => {
     console.log('progress ' + p)
