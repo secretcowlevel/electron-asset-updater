@@ -43,32 +43,19 @@ async function downloadFile (filename, progressCb, options = {}) {
       })
       .on('end', async () => {
         updaterOptions.log.info(`${filename} Downloaded!`)
-        const finish = async () => {
-          const data = fs.readFileSync(tmpFilePath)
-          // if (tmpFilePath.split('.')[1] === 'md5') {
-          //   updaterOptions.log.info(`>>> File Data: ${data}`)
-          // }
-          md5file(tmpFilePath, (err2, hash) => {
-            if (err2) {
-              throw new Error('ERROR CREATING MD5')
-            }
-            updaterOptions.log.info(`MD5 of file: ${hash}`)
-            resolve({ data, hash })
-          })
-        }
         if (options.zipped) {
-          const unzipper = unzip
-            .Extract({
-              path: path.join(updaterOptions.appData, '/assets')
-            })
-            .on('close', finish)
-            .on('error', (err) => {
-              reject(err)
-            })
-          fs.createReadStream(tmpFilePath).pipe(unzipper)
-        } else {
-          finish()
+          updaterOptions.log.info(`ZIPPED!`)
+
+          fs.createReadStream(tmpFilePath).pipe(unzip.Extract({ path: path.join(updaterOptions.appData, '/assets') }))
         }
+        const data = fs.readFileSync(tmpFilePath)
+        md5file(tmpFilePath, (err2, hash) => {
+          if (err2) {
+            throw new Error('ERROR CREATING MD5')
+          }
+          updaterOptions.log.info(`MD5 of file: ${hash}`)
+          resolve({ data, hash })
+        })
       })
       .pipe(fs.createWriteStream(tmpFilePath))
   })
