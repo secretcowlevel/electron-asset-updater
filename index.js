@@ -7,6 +7,9 @@ const progress = require('request-progress')
 const Bluebird = require('bluebird')
 const rimraf = require('rimraf')
 
+const MAX_DOWNLOAD_RETRIES = 5
+const MAX_UNZIP_RETRIES = 5
+
 const NO_OP = () => {}
 
 const defaultOptions = {
@@ -30,34 +33,60 @@ async function downloadFile (filename, progressCb, options = {}) {
     updaterOptions.log.info(`downloadFile() -> ${tmpFilePath}`)
     updaterOptions.log.info(`Remote URL: ${remoteFileUri}`)
 
-    await progress(await request(remoteFileUri))
-      .on('progress', (state) => {
-        progressCb(`Transferred ${Math.floor(state.percent * 100)}% (${Math.floor(state.size.transferred / 1000 / 1000)}Mb / ${Math.floor(state.size.total / 1000 / 1000)}Mb)`)
-      })
-      .on('error', (err) => {
-        updaterOptions.log.error('ERROR IN GET')
-        if (options.errorCb) {
-          options.errorCb()
-        }
-        reject(err)
-      })
-      .on('end', async () => {
-        updaterOptions.log.info(`${filename} Downloaded!`)
-        if (options.zipped) {
-          updaterOptions.log.info(`ZIPPED!`)
+    for (let downloadRetries = 1; downloadRetries <= MAX_DOWNLOAD_RETRIES; downloadRetries++) {
+      try {
+        await progress(await request(remoteFileUri))
+          .on('progress', (state) => {
+            progressCb(`Transferred ${Math.floor(state.percent * 100)}% (${Math.floor(state.size.transferred / 1000 / 1000)}Mb / ${Math.floor(state.size.total / 1000 / 1000)}Mb)`)
+          })
+          .on('error', (err) => {
+            updaterOptions.log.error('ERROR IN GET')
+            if (options.errorCb) {
+              options.errorCb()
+            }
+            reject(err)
+          })
+          .on('end', async () => {
+            updaterOptions.log.info(`${filename} Downloaded!`)
+            if (options.zipped) {
+              updaterOptions.log.info(`ZIPPED!`)
 
-          fs.createReadStream(tmpFilePath).pipe(unzip.Extract({ path: path.join(updaterOptions.appData, '/assets') }))
+              for (let unzipRetries = 1; unzipRetries <= MAX_UNZIP_RETRIES; unzipRetries++) {
+                try {
+                  fs.createReadStream(tmpFilePath).pipe(unzip.Extract({ path: path.join(updaterOptions.appData, '/assets') }))
+                  break
+                } catch(e) {
+                  if (unzipRetries <= MAX_UNZIP_RETRIES) {
+                    updaterOptions.log.error(`:: Error unzipping ${tmpFilePath}! Retry ${unzipRetries} of ${MAX_UNZIP_RETRIES}.`)
+                  } else {
+                    updaterOptions.log.error(`:: Error unzipping ${tmpFilePath}!`)
+                    progressCb('Unzip Failed. Please restart to try again.') // eslint-disable-line standard/no-callback-literal
+                    throw e
+                  }
+                }
+              }
+            }
+            const data = fs.readFileSync(tmpFilePath)
+            md5file(tmpFilePath, (err2, hash) => {
+              if (err2) {
+                throw new Error('ERROR CREATING MD5')
+              }
+              updaterOptions.log.info(`MD5 of file: ${hash}`)
+              resolve({ data, hash })
+            })
+          })
+          .pipe(fs.createWriteStream(tmpFilePath))
+        break
+      } catch (e) {
+        if (downloadRetries <= MAX_DOWNLOAD_RETRIES) {
+          updaterOptions.log.error(`:: Updating ${asset.asset}.zip failed. Retry ${downloadRetries} of ${MAX_DOWNLOAD_RETRIES}.`)
+        } else {
+          updaterOptions.log.error(`:: Updating ${asset.asset}.zip failed.`)
+          progressCb('Download Failed. Please restart to try again.') // eslint-disable-line standard/no-callback-literal
+          throw e
         }
-        const data = fs.readFileSync(tmpFilePath)
-        md5file(tmpFilePath, (err2, hash) => {
-          if (err2) {
-            throw new Error('ERROR CREATING MD5')
-          }
-          updaterOptions.log.info(`MD5 of file: ${hash}`)
-          resolve({ data, hash })
-        })
-      })
-      .pipe(fs.createWriteStream(tmpFilePath))
+      }
+    }
   })
 }
 
@@ -85,9 +114,9 @@ exports.init = (config) => {
     ...config
   }
 }
+
 // the main entry point to start the updater
 exports.assetUpdater = async function (assets, cb, progressCb = () => null, errorCb = () => null) {
-  updaterOptions.log.info('\n************************\nWHAAAAAAAAAAAAAAAT\n************************\n')
   // make sure we have a tmp folder for downloads!
   const tmpFolder = path.join(updaterOptions.appData, '/tmp')
   if (!fs.existsSync(tmpFolder)) {
@@ -96,7 +125,7 @@ exports.assetUpdater = async function (assets, cb, progressCb = () => null, erro
 
   // First we prep which files need updates...
   const updateList = await Bluebird.mapSeries(assets, async function (asset) {
-    updaterOptions.log.info(':: Downloading/Checking ' + `${asset}.md5`)
+    updaterOptions.log.info(`:: Downloading/Checking ${asset}.md5`)
     const { data } = await downloadFile(`${asset}.md5`, progressCb, { errorCb })
     updaterOptions.log.info(`Remote MD5: ${String(data).trim()}`)
     const md5 = await getLocalHash(`${asset}.md5`)
@@ -108,12 +137,13 @@ exports.assetUpdater = async function (assets, cb, progressCb = () => null, erro
   }).filter(a => a.needUpdate)
 
   // Next we download the zip files that we're looking for!
-  updaterOptions.log.info(':: Updating ' + `${updateList.length} assets.`)
+  updaterOptions.log.info(`:: Updating ${updateList.length} assets.`)
 
   if (updateList.length) {
     await Bluebird.mapSeries(updateList, async function (asset, index, length) {
-      updaterOptions.log.info(':: Updating ' + `${asset.asset}.zip`)
+      updaterOptions.log.info(`:: Updating ${asset.asset}.zip`)
       cb(`Downloading ${index + 1} of ${length}`) // eslint-disable-line standard/no-callback-literal
+
       // remove the old stale folder
       await rimraf.sync(path.join(updaterOptions.appData, `/assets/${asset.asset}/`))
       const { hash } = await downloadFile(`${asset.asset}.zip`, progressCb, { zipped: true })
