@@ -151,10 +151,12 @@ exports.assetUpdater = async function (assets, cb, progressCb = () => null, erro
       errorCb
     });
     updaterOptions.log.info(`Remote MD5: ${String(data).trim()}`);
-    const md5 = await getLocalHash(`${asset}.md5`);
+    const md5 = await getLocalHash(`${asset}.md5`); // @TODO if the below check fails, we should retry! But this should at least fix
+    // the "phantom downloads"
+
     return {
       asset: asset,
-      needUpdate: String(data).trim() !== String(md5).trim()
+      needUpdate: !!String(data).trim() && String(data).trim() !== String(md5).trim()
     };
   }).filter(a => a.needUpdate); // Next we download the zip files that we're looking for!
 

@@ -55,7 +55,7 @@ async function downloadFile (filename, progressCb, options = {}) {
                 try {
                   fs.createReadStream(tmpFilePath).pipe(unzip.Extract({ path: path.join(updaterOptions.appData, '/assets') }))
                   break
-                } catch(e) {
+                } catch (e) {
                   if (unzipRetries <= MAX_UNZIP_RETRIES) {
                     updaterOptions.log.error(`:: Error unzipping ${tmpFilePath}! Retry ${unzipRetries} of ${MAX_UNZIP_RETRIES}.`)
                   } else {
@@ -130,9 +130,11 @@ exports.assetUpdater = async function (assets, cb, progressCb = () => null, erro
     updaterOptions.log.info(`Remote MD5: ${String(data).trim()}`)
     const md5 = await getLocalHash(`${asset}.md5`)
 
+    // @TODO if the below check fails, we should retry! But this should at least fix
+    // the "phantom downloads"
     return {
       asset: asset,
-      needUpdate: (String(data).trim() !== String(md5).trim())
+      needUpdate: (!!String(data).trim() && String(data).trim() !== String(md5).trim())
     }
   }).filter(a => a.needUpdate)
 
