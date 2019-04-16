@@ -79,9 +79,9 @@ async function downloadFile (filename, progressCb, options = {}) {
         break
       } catch (e) {
         if (downloadRetries <= MAX_DOWNLOAD_RETRIES) {
-          updaterOptions.log.error(`:: Updating ${asset.asset}.zip failed. Retry ${downloadRetries} of ${MAX_DOWNLOAD_RETRIES}.`)
+          updaterOptions.log.error(`:: Updating ${filename} failed. Retry ${downloadRetries} of ${MAX_DOWNLOAD_RETRIES}.`)
         } else {
-          updaterOptions.log.error(`:: Updating ${asset.asset}.zip failed.`)
+          updaterOptions.log.error(`:: Updating ${filename} failed.`)
           progressCb('Download Failed. Please restart to try again.') // eslint-disable-line standard/no-callback-literal
           throw e
         }
